@@ -1111,7 +1111,7 @@ $('shot-input').addEventListener('change', async (ev)=>{
         max_tokens:1000,
         messages:[{role:'user',content:[
           {type:'image',source:{type:'base64',media_type:mediaType,data:data}},
-          {type:'text',text:'This is a screenshot of a sleep tracker (Fitbit or similar). Extract the sleep data and respond with ONLY a JSON object, no other text, no markdown fences. Use exactly these keys:\n{"deep_min": number, "rem_min": number, "light_min": number, "awake_min": number, "restless_min": number, "bed_time": "HH:MM" 24-hour or null, "wake_time": "HH:MM" 24-hour or null}\nConvert all durations like "1h 16m" into total minutes. If a value is not visible in the screenshot, use 0 for durations and null for times. The bed time is usually the leftmost timestamp on the chart’s time axis and the wake time is the rightmost.'}
+          {type:'text',text:'This is a screenshot of a sleep tracker (Fitbit or similar). Extract the sleep data and respond with ONLY a JSON object, no other text, no markdown fences. Use exactly these keys:\n{"deep_min": number, "rem_min": number, "light_min": number, "awake_min": number, "restless_min": number, "bed_time": "HH:MM" 24-hour or null, "wake_time": "HH:MM" 24-hour or null, "quick_take": "one short honest sentence (under 20 words) on how this single night looks based only on these numbers"}\nConvert all durations like "1h 16m" into total minutes. If a value is not visible in the screenshot, use 0 for durations and null for times. The bed time is usually the leftmost timestamp on the chart’s time axis and the wake time is the rightmost.'}
         ]}]
       })
     });
@@ -1135,7 +1135,8 @@ $('shot-input').addEventListener('change', async (ev)=>{
     $('f-date').value=y.toISOString().slice(0,10);
 
     const t=(d.deep_min||0)+(d.rem_min||0)+(d.light_min||0);
-    status.innerHTML=`✓ Read <b style="color:var(--text)">${fmt(t)}</b> of sleep — numbers are in the form below. Check them, add how you feel, and save.`;
+    const quickTake=d.quick_take?`<br><span style="color:var(--muted)">${d.quick_take}</span>`:'';
+    status.innerHTML=`✓ Read <b style="color:var(--text)">${fmt(t)}</b> of sleep.${quickTake}<br>Numbers are in the form below — check them, add how you feel, and save.`;
     $('f-date').scrollIntoView({behavior:'smooth', block:'center'});
     toast('Screenshot read ✓');
   }catch(err){
@@ -1227,7 +1228,8 @@ $('hr-shot-input').addEventListener('change', async (ev)=>{
     $('hr-peak').value=Math.round(d.peak_min)||0;
     if(d.notable) $('hr-notes').value=d.notable;
     $('hr-date').value=todayStr();
-    status.innerHTML=`Read resting HR <b style="color:var(--text)">${d.resting_hr??'—'} bpm</b> — check the form below and save.`;
+    const hrNote=d.notable?`<br><span style="color:var(--muted)">${d.notable}</span>`:'';
+    status.innerHTML=`Read resting HR <b style="color:var(--text)">${d.resting_hr??'—'} bpm</b>.${hrNote}<br>Check the form below and save.`;
     $('hr-date').scrollIntoView({behavior:'smooth', block:'center'});
     toast('Screenshot read');
   }catch(err){
