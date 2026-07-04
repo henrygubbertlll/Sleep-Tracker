@@ -1234,17 +1234,33 @@ $('hr-shot-input').addEventListener('change', async (ev)=>{
     logUsage('heart_scan', result);
     const text=(result.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
     const d=JSON.parse(text.replace(/```json|```/g,'').trim());
-    if(d.resting_hr) $('hr-rest').value=Math.round(d.resting_hr);
-    if(d.min_hr) $('hr-min').value=Math.round(d.min_hr);
-    if(d.max_hr) $('hr-max').value=Math.round(d.max_hr);
-    $('hr-fat').value=Math.round(d.fat_burn_min)||0;
-    $('hr-cardio').value=Math.round(d.cardio_min)||0;
-    $('hr-peak').value=Math.round(d.peak_min)||0;
+    // The model occasionally returns a number-like string (e.g. a range, or units attached)
+    // instead of a clean number. Math.round() on that silently produces NaN, which then
+    // silently clears a <input type=number>'s value — so parse defensively instead of
+    // trusting the JSON type.
+    function extractNum(v){
+      if(v==null) return null;
+      if(typeof v==='number') return isFinite(v)?v:null;
+      const m=String(v).match(/-?\d+(\.\d+)?/);
+      return m?parseFloat(m[0]):null;
+    }
+    const restingHr=extractNum(d.resting_hr);
+    const minHr=extractNum(d.min_hr);
+    const maxHr=extractNum(d.max_hr);
+    if(restingHr!=null) $('hr-rest').value=Math.round(restingHr);
+    if(minHr!=null) $('hr-min').value=Math.round(minHr);
+    if(maxHr!=null) $('hr-max').value=Math.round(maxHr);
+    $('hr-fat').value=Math.round(extractNum(d.fat_burn_min))||0;
+    $('hr-cardio').value=Math.round(extractNum(d.cardio_min))||0;
+    $('hr-peak').value=Math.round(extractNum(d.peak_min))||0;
     if(d.notable) $('hr-notes').value=d.notable;
     $('hr-date').value=hrDay;
+    if(restingHr==null) console.warn('HR scan: could not parse resting_hr from model response:', d.resting_hr);
     const hrNote=d.notable?`<br><span style="color:var(--muted)">${d.notable}</span>`:'';
     const estNote=d.resting_hr_estimated?' <span style="color:var(--muted)">(estimated from your calmer awake stretches, excluding sleep — no explicit reading was shown)</span>':'';
-    status.innerHTML=`Read resting HR <b style="color:var(--text)">${d.resting_hr??'—'} bpm</b>${estNote}.${hrNote}<br>Check the form below and save.`;
+    const restingHrDisplay=restingHr!=null?Math.round(restingHr):'—';
+    const notParsedNote=(d.resting_hr!=null && restingHr==null)?' <span style="color:#e28b8b">(couldn’t read a clean number — check the field below)</span>':'';
+    status.innerHTML=`Read resting HR <b style="color:var(--text)">${restingHrDisplay} bpm</b>${estNote}${notParsedNote}.${hrNote}<br>Check the form below and save.`;
     $('hr-date').scrollIntoView({behavior:'smooth', block:'center'});
     toast('Screenshot read');
   }catch(err){
