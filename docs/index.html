@@ -409,6 +409,7 @@ canvas{max-height:230px;}
 <section id="tab-heart" style="display:none;">
   <div class="card" id="hr-baseline-card" style="display:none;">
     <h2>Recovery signal</h2>
+    <div id="hr-readiness" style="font-size:13px; color:var(--muted); margin-bottom:10px;"></div>
     <div class="dash-total" id="hr-today" style="margin-bottom:10px;"></div>
     <div class="verdicts" id="hr-verdicts" style="margin-top:0; padding-top:0; border-top:none;"></div>
   </div>
@@ -483,6 +484,12 @@ canvas{max-height:230px;}
     <h2>AI deep analysis</h2>
     <div class="insight" id="ai-analysis" style="margin-bottom:12px;">Sends your logged nights and heart rate days together to Claude for one personalized read across both. Works best with 5+ of each logged.</div>
     <button class="primary" id="btn-ai">Analyze my sleep + heart</button>
+    <div id="ai-followup-wrap" style="display:none; margin-top:14px;">
+      <label for="ai-followup-q">Ask a follow-up about your data</label>
+      <textarea id="ai-followup-q" placeholder="e.g. does my HR spike more on days I skip creatine?" style="min-height:44px;"></textarea>
+      <button id="btn-ai-followup" style="background:var(--panel2); color:var(--text); border:1.5px dashed var(--border); box-shadow:none; font-weight:500; margin-top:8px;">Ask</button>
+      <div class="insight" id="ai-followup-answer" style="display:none; margin-top:12px;"></div>
+    </div>
   </div>
 </section>
 
@@ -901,11 +908,15 @@ function renderDash(){
   $('dash-date').textContent='Night of '+prettyDate(e.date)+(e.bed&&e.wake?` · ${to12(e.bed)}–${to12(e.wake)}`:'');
   $('dash-total').innerHTML=fmt(t)+' <span>asleep</span>';
   $('dash-bar').innerHTML=nightbarHTML(e);
+  // Fitbit/Google Health's "Sound Sleep": steady, undisturbed sleep — total sleep stages
+  // minus the restless (stirring) minutes within them.
+  const soundSleep=Math.max(0,(e.deep||0)+(e.rem||0)+(e.light||0)-(e.restless||0));
   $('dash-legend').innerHTML=
     `<span><span class="dot" style="background:var(--deep)"></span>Deep <b>${fmt(e.deep)}</b></span>`+
     `<span><span class="dot" style="background:var(--rem)"></span>REM <b>${fmt(e.rem)}</b></span>`+
     `<span><span class="dot" style="background:var(--light)"></span>Light <b>${fmt(e.light)}</b></span>`+
-    `<span><span class="dot" style="background:var(--awake)"></span>Awake <b>${fmt(e.awake)}</b></span>`;
+    `<span><span class="dot" style="background:var(--awake)"></span>Awake <b>${fmt(e.awake)}</b></span>`+
+    `<span><span class="dot" style="background:var(--good)"></span>Sound sleep <b>${fmt(soundSleep)}</b></span>`;
   $('dash-verdicts').innerHTML=verdicts(e).map(v=>`<div class="verdict v-${v[0]}"><span class="mark">${v[0]==='good'?'✓':v[0]==='warn'?'△':'✕'}</span><span class="txt">${v[1]}</span></div>`).join('');
 }
 function to12(t){ if(!t) return ''; let[h,m]=t.split(':').map(Number); const ap=h>=12?'PM':'AM'; h=h%12||12; return `${h}:${String(m).padStart(2,'0')} ${ap}`; }
@@ -1296,6 +1307,28 @@ $('hr-shot-input').addEventListener('change', async (ev)=>{
 
 /* --- Heart tab rendering --- */
 let chR;
+// Fitbit-style Active Zone Minutes: fat-burn minutes count 1:1, cardio/peak count 2:1.
+function activeZoneMinutes(e){ return (e.fat||0) + ((e.cardio||0)+(e.peak||0))*2; }
+
+// Rough readiness-score approximation (0-100), modeled on Google Health's readiness score
+// (which uses HRV + RHR + sleep). We don't have HRV from screenshots, so this only uses
+// last night's sleep score and today's resting HR vs your rolling baseline — always
+// labeled as an approximation so it isn't mistaken for the real thing.
+function readinessScore(hrEntry){
+  const base=rhrBaseline(hrEntry.date);
+  const nightBefore=entries.find(x=>x.date===addDays(hrEntry.date,-1));
+  const sleepPts = nightBefore ? (score(nightBefore)/100)*50 : 25; // neutral default if no sleep logged
+  let rhrPts = 25; // neutral default until we have a baseline
+  if(base!=null){
+    const dv=hrEntry.rest-base;
+    if(dv<=-3) rhrPts=50;
+    else if(dv<3) rhrPts=40;
+    else if(dv<5) rhrPts=25;
+    else rhrPts=10;
+  }
+  return Math.round(sleepPts+rhrPts);
+}
+
 function renderHeartDash(){
   // recovery signal card — lives in the Heart tab
   const card=$('hr-baseline-card');
@@ -1304,6 +1337,9 @@ function renderHeartDash(){
     card.style.display='block';
     const e=hrEntries[0];
     $('hr-today').innerHTML=`${e.rest} <span>bpm resting · ${prettyDate(e.date)}</span>`;
+    const rdy=readinessScore(e);
+    const azm=activeZoneMinutes(e);
+    $('hr-readiness').innerHTML=`<b style="color:var(--text); font-size:20px;">${rdy}</b> <span>readiness (approx. — sleep + resting HR only, no HRV data available from screenshots)</span> &nbsp;·&nbsp; <b style="color:var(--text);">${azm}</b> <span>Active Zone Minutes today</span>`;
     const base=rhrBaseline(e.date);
     const vs=[];
     if(base!=null){
@@ -1561,12 +1597,59 @@ Be direct and specific to HIS numbers — quote them. If the data is too sparse 
     logUsage('analysis', result);
     const text=(result.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
     box.innerHTML=text.split(/\n{2,}/).map(p=>`<p>${escapeHtml(p.trim())}</p>`).join('');
+    lastAnalysisText=text;
+    $('ai-followup-wrap').style.display='block';
   }catch(err){
     box.textContent='Analysis didn’t go through — check your connection and try again.';
     console.error(err);
   }finally{
     btn.disabled=false; btn.textContent='Analyze my sleep + heart'; btn.style.opacity=1;
   }
+};
+
+/* --- follow-up Q&A on the deep analysis, similar to Google Health's "Ask Coach" --- */
+let lastAnalysisText='';
+$('btn-ai-followup').onclick=async()=>{
+  if(!requireApiKey()) return;
+  const q=$('ai-followup-q').value.trim();
+  if(!q){ toast('Type a question first'); return; }
+  const btn=$('btn-ai-followup'), ans=$('ai-followup-answer');
+  btn.disabled=true; btn.style.opacity=.6;
+  ans.style.display='block'; ans.textContent='Thinking…';
+  const recent=[...entries].slice(0,21).map(e=>({
+    date:e.date, bed:e.bed, wake:e.wake, deep_min:e.deep, rem_min:e.rem, light_min:e.light,
+    awake_min:e.awake, restless_min:e.restless, morning_feel:e.feel, notes:e.notes, score:score(e)
+  }));
+  const recentHR=[...hrEntries].slice(0,21).map(e=>({
+    date:e.date, resting_hr:e.rest, min_hr:e.min, max_hr:e.max,
+    fat_burn_min:e.fat, cardio_min:e.cardio, peak_min:e.peak, notes:e.notes
+  }));
+  try{
+    const response=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST', headers:anthropicHeaders(),
+      body:JSON.stringify({ model:'claude-sonnet-5', max_tokens:600,
+        messages:[{role:'user',content:
+`You previously analyzed this person's sleep + heart rate data and gave this summary:
+"""${lastAnalysisText}"""
+
+Their sleep log: ${JSON.stringify(recent)}
+Their heart rate log: ${JSON.stringify(recentHR)}
+
+They now have a follow-up question: "${q}"
+
+Answer directly and specifically using their actual numbers where relevant. If the data can't support a real answer (too sparse, no clear pattern), say so plainly instead of guessing. Keep it under 150 words, plain English, no markdown headers or bullets.`
+        }]
+      })
+    });
+    const result=await response.json();
+    if(result.error) throw new Error(result.error.message||'API error');
+    logUsage('analysis', result);
+    const text=(result.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
+    ans.innerHTML=text.split(/\n{2,}/).map(p=>`<p>${escapeHtml(p.trim())}</p>`).join('');
+  }catch(err){
+    ans.textContent='Couldn’t get an answer — check your connection and try again.';
+    console.error(err);
+  }finally{ btn.disabled=false; btn.style.opacity=1; }
 };
 
 /* ================= backup ================= */
