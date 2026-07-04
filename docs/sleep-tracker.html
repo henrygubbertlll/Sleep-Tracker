@@ -4,15 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sleep Tracker</title>
-<link rel="apple-touch-icon" href="icon-180.png">
-<link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="icon-16.png">
-<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
-<link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#05070F">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Sleep Tracker">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Spline+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -600,6 +591,35 @@ function anthropicHeaders(){
     'anthropic-dangerous-direct-browser-access':'true'
   };
 }
+
+/* Convert any picked file (HEIC photo, huge camera image, PNG, whatever) into a
+   modest-size JPEG data URL. The Anthropic vision API only accepts jpeg/png/gif/webp
+   and works best with images no larger than ~1568px on the long edge — a raw phone
+   camera photo (often HEIC and 3000px+) can fail silently otherwise. Drawing to a
+   canvas re-encodes it as a plain JPEG regardless of the original format. */
+async function fileToApiImage(file, maxDim=1568, quality=0.85){
+  const rawDataUrl = await new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=()=>res(r.result);
+    r.onerror=()=>rej(new Error('read failed'));
+    r.readAsDataURL(file);
+  });
+  const img = await new Promise((res,rej)=>{
+    const im=new Image();
+    im.onload=()=>res(im);
+    im.onerror=()=>rej(new Error('image decode failed'));
+    im.src=rawDataUrl;
+  });
+  const scale = Math.min(1, maxDim/Math.max(img.width, img.height));
+  const w = Math.max(1, Math.round(img.width*scale));
+  const h = Math.max(1, Math.round(img.height*scale));
+  const canvas = document.createElement('canvas');
+  canvas.width=w; canvas.height=h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+  const jpegDataUrl = canvas.toDataURL('image/jpeg', quality);
+  return { dataUrl: jpegDataUrl, mediaType: 'image/jpeg', data: jpegDataUrl.split(',')[1] };
+}
 function requireApiKey(){
   if(hasApiKey()) return true;
   openSettings();
@@ -1052,20 +1072,19 @@ $('shot-input').addEventListener('change', async (ev)=>{
   if(!file) return;
   const status=$('scan-status'), preview=$('scan-preview'), btn=$('btn-scan');
 
-  // show preview
-  const base64=await new Promise((res,rej)=>{
-    const r=new FileReader();
-    r.onload=()=>res(r.result);
-    r.onerror=()=>rej(new Error('read failed'));
-    r.readAsDataURL(file);
-  }).catch(()=>null);
-  if(!base64){ toast('Couldn’t read that image'); return; }
-  preview.src=base64; preview.style.display='block';
   status.style.display='block'; status.textContent='Reading your sleep data…';
   btn.disabled=true; btn.style.opacity=.6;
 
-  const mediaType=base64.substring(5, base64.indexOf(';'));
-  const data=base64.split(',')[1];
+  let mediaType, data;
+  try{
+    const img=await fileToApiImage(file);
+    preview.src=img.dataUrl; preview.style.display='block';
+    mediaType=img.mediaType; data=img.data;
+  }catch(err){
+    toast('Couldn’t read that image');
+    status.style.display='none'; btn.disabled=false; btn.style.opacity=1; ev.target.value='';
+    return;
+  }
 
   try{
     const response=await fetch('https://api.anthropic.com/v1/messages',{
@@ -1104,7 +1123,7 @@ $('shot-input').addEventListener('change', async (ev)=>{
     $('f-date').scrollIntoView({behavior:'smooth', block:'center'});
     toast('Screenshot read ✓');
   }catch(err){
-    status.textContent='Couldn’t read that screenshot — try a clearer/full crop of the sleep chart, or type the numbers manually below.';
+    status.textContent='Couldn’t read that screenshot ('+(err&&err.message?err.message:'unknown error')+') — try a clearer/full crop of the sleep chart, or type the numbers manually below.';
     console.error(err);
   }finally{
     btn.disabled=false; btn.style.opacity=1;
@@ -1157,13 +1176,18 @@ $('btn-hr-scan').onclick=()=>{ if(requireApiKey()) $('hr-shot-input').click(); }
 $('hr-shot-input').addEventListener('change', async (ev)=>{
   const file=ev.target.files[0]; if(!file) return;
   const status=$('hr-scan-status'), preview=$('hr-scan-preview'), btn=$('btn-hr-scan');
-  const base64=await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(0); r.readAsDataURL(file); }).catch(()=>null);
-  if(!base64){ toast('Couldn’t read that image'); return; }
-  preview.src=base64; preview.style.display='block';
   status.style.display='block'; status.textContent='Reading your heart rate data\u2026';
   btn.disabled=true; btn.style.opacity=.6;
-  const mediaType=base64.substring(5, base64.indexOf(';'));
-  const data=base64.split(',')[1];
+  let mediaType, data;
+  try{
+    const img=await fileToApiImage(file);
+    preview.src=img.dataUrl; preview.style.display='block';
+    mediaType=img.mediaType; data=img.data;
+  }catch(err){
+    toast('Couldn’t read that image');
+    status.style.display='none'; btn.disabled=false; btn.style.opacity=1; ev.target.value='';
+    return;
+  }
   try{
     const response=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST', headers:anthropicHeaders(),
@@ -1191,7 +1215,7 @@ $('hr-shot-input').addEventListener('change', async (ev)=>{
     $('hr-date').scrollIntoView({behavior:'smooth', block:'center'});
     toast('Screenshot read');
   }catch(err){
-    status.textContent='Couldn’t read that screenshot — try a fuller crop of the HR chart, or type the numbers manually.';
+    status.textContent='Couldn’t read that screenshot ('+(err&&err.message?err.message:'unknown error')+') — try a fuller crop of the HR chart, or type the numbers manually.';
     console.error(err);
   }finally{ btn.disabled=false; btn.style.opacity=1; ev.target.value=''; }
 });
