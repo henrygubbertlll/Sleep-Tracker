@@ -1206,12 +1206,26 @@ $('hr-shot-input').addEventListener('change', async (ev)=>{
     return;
   }
   try{
+    // Which calendar day does this HR screenshot cover? Respect a date the user already
+    // picked; otherwise assume it's yesterday's data (matches "log this morning" habit).
+    const hrDay = $('hr-date').value || addDays(todayStr(), -1);
+
+    // Figure out this person's actual sleep window around that day so the model can
+    // exclude it — sleep heart rate is naturally much lower and was getting mistaken
+    // for "resting". The night that *starts* on hrDay covers its late hours; the night
+    // that *ends* on hrDay morning (logged the day before) covers its early hours.
+    const nightBefore = entries.find(e=>e.date===addDays(hrDay,-1));
+    const nightOf = entries.find(e=>e.date===hrDay);
+    const morningWake = (nightBefore && nightBefore.wake) ? nightBefore.wake : '08:00';
+    const eveningBed = (nightOf && nightOf.bed) ? nightOf.bed : '23:30';
+    const sleepNote = `Based on this person's own sleep log, they were very likely asleep from midnight until about ${morningWake} that morning, and again from about ${eveningBed} until midnight that night. Exclude those ranges entirely — heart rate during sleep is naturally much lower and should NOT count as "resting". Only use calm, awake, non-exercising stretches (sitting, reading, working, watching TV, etc.) to estimate resting heart rate.`;
+
     const response=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST', headers:anthropicHeaders(),
       body:JSON.stringify({ model:'claude-sonnet-5', max_tokens:1000,
         messages:[{role:'user',content:[
           {type:'image',source:{type:'base64',media_type:mediaType,data:data}},
-          {type:'text',text:'This is a screenshot of a heart rate tracker (Fitbit or similar) showing a day of heart rate data. Extract the data and respond with ONLY a JSON object, no other text, no markdown fences. Use exactly these keys:\n{"resting_hr": number or null, "resting_hr_estimated": boolean, "min_hr": number or null, "max_hr": number or null, "fat_burn_min": number, "cardio_min": number, "peak_min": number, "notable": "one short sentence describing any obvious spikes and their approximate times, or empty string"}\nIf a resting heart rate is explicitly labeled on the screenshot, use that number and set resting_hr_estimated to false. If none is explicitly labeled, estimate it yourself from the graph: ignore the high spikes during exercise (the fat burn/cardio/peak zones) and average the lowest, steadiest stretches of the line during normal non-exercising activity, then set resting_hr_estimated to true. Zone minutes may be labeled Fat burn/Cardio/Peak or Light/Moderate/Vigorous — map them in that order. Use 0 for zone minutes not shown and null only if you truly cannot make a reasonable estimate.'}
+          {type:'text',text:`This is a screenshot of a heart rate tracker (Fitbit or similar) showing a day of heart rate data. Extract the data and respond with ONLY a JSON object, no other text, no markdown fences. Use exactly these keys:\n{"resting_hr": number or null, "resting_hr_estimated": boolean, "min_hr": number or null, "max_hr": number or null, "fat_burn_min": number, "cardio_min": number, "peak_min": number, "notable": "one short sentence describing any obvious spikes and their approximate times, or empty string"}\nIf a resting heart rate is explicitly labeled on the screenshot, use that number and set resting_hr_estimated to false. If none is explicitly labeled, estimate it yourself from the graph: ignore the high spikes during exercise (the fat burn/cardio/peak zones) and average the lowest, steadiest stretches of the line during normal non-exercising AWAKE activity, then set resting_hr_estimated to true. ${sleepNote} Zone minutes may be labeled Fat burn/Cardio/Peak or Light/Moderate/Vigorous — map them in that order. Use 0 for zone minutes not shown and null only if you truly cannot make a reasonable estimate.`}
         ]}]
       })
     });
@@ -1227,9 +1241,9 @@ $('hr-shot-input').addEventListener('change', async (ev)=>{
     $('hr-cardio').value=Math.round(d.cardio_min)||0;
     $('hr-peak').value=Math.round(d.peak_min)||0;
     if(d.notable) $('hr-notes').value=d.notable;
-    $('hr-date').value=todayStr();
+    $('hr-date').value=hrDay;
     const hrNote=d.notable?`<br><span style="color:var(--muted)">${d.notable}</span>`:'';
-    const estNote=d.resting_hr_estimated?' <span style="color:var(--muted)">(estimated from your calmer stretches — no explicit reading was shown)</span>':'';
+    const estNote=d.resting_hr_estimated?' <span style="color:var(--muted)">(estimated from your calmer awake stretches, excluding sleep — no explicit reading was shown)</span>':'';
     status.innerHTML=`Read resting HR <b style="color:var(--text)">${d.resting_hr??'—'} bpm</b>${estNote}.${hrNote}<br>Check the form below and save.`;
     $('hr-date').scrollIntoView({behavior:'smooth', block:'center'});
     toast('Screenshot read');
