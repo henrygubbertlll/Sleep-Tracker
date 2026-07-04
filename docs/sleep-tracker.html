@@ -1211,7 +1211,7 @@ $('hr-shot-input').addEventListener('change', async (ev)=>{
       body:JSON.stringify({ model:'claude-sonnet-5', max_tokens:1000,
         messages:[{role:'user',content:[
           {type:'image',source:{type:'base64',media_type:mediaType,data:data}},
-          {type:'text',text:'This is a screenshot of a heart rate tracker (Fitbit or similar) showing a day of heart rate data. Extract the data and respond with ONLY a JSON object, no other text, no markdown fences. Use exactly these keys:\n{"resting_hr": number or null, "min_hr": number or null, "max_hr": number or null, "fat_burn_min": number, "cardio_min": number, "peak_min": number, "notable": "one short sentence describing any obvious spikes and their approximate times, or empty string"}\nZone minutes may be labeled Fat burn/Cardio/Peak or Light/Moderate/Vigorous — map them in that order. Use 0 for zone minutes not shown and null for missing HR values.'}
+          {type:'text',text:'This is a screenshot of a heart rate tracker (Fitbit or similar) showing a day of heart rate data. Extract the data and respond with ONLY a JSON object, no other text, no markdown fences. Use exactly these keys:\n{"resting_hr": number or null, "resting_hr_estimated": boolean, "min_hr": number or null, "max_hr": number or null, "fat_burn_min": number, "cardio_min": number, "peak_min": number, "notable": "one short sentence describing any obvious spikes and their approximate times, or empty string"}\nIf a resting heart rate is explicitly labeled on the screenshot, use that number and set resting_hr_estimated to false. If none is explicitly labeled, estimate it yourself from the graph: ignore the high spikes during exercise (the fat burn/cardio/peak zones) and average the lowest, steadiest stretches of the line during normal non-exercising activity, then set resting_hr_estimated to true. Zone minutes may be labeled Fat burn/Cardio/Peak or Light/Moderate/Vigorous — map them in that order. Use 0 for zone minutes not shown and null only if you truly cannot make a reasonable estimate.'}
         ]}]
       })
     });
@@ -1229,7 +1229,8 @@ $('hr-shot-input').addEventListener('change', async (ev)=>{
     if(d.notable) $('hr-notes').value=d.notable;
     $('hr-date').value=todayStr();
     const hrNote=d.notable?`<br><span style="color:var(--muted)">${d.notable}</span>`:'';
-    status.innerHTML=`Read resting HR <b style="color:var(--text)">${d.resting_hr??'—'} bpm</b>.${hrNote}<br>Check the form below and save.`;
+    const estNote=d.resting_hr_estimated?' <span style="color:var(--muted)">(estimated from your calmer stretches — no explicit reading was shown)</span>':'';
+    status.innerHTML=`Read resting HR <b style="color:var(--text)">${d.resting_hr??'—'} bpm</b>${estNote}.${hrNote}<br>Check the form below and save.`;
     $('hr-date').scrollIntoView({behavior:'smooth', block:'center'});
     toast('Screenshot read');
   }catch(err){
