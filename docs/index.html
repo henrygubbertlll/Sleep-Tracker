@@ -424,6 +424,7 @@ canvas{max-height:230px;}
 
   <div class="card">
     <h2 id="hr-form-title">Log a day</h2>
+    <div class="editing-banner" id="hr-edit-banner">Editing a day — <a href="#" id="hr-cancel-edit" style="color:inherit;">cancel</a></div>
     <div class="grid2">
       <div><label for="hr-date">Date</label><input type="date" id="hr-date"></div>
       <div><label for="hr-rest">Resting HR (bpm)</label><input type="number" id="hr-rest" placeholder="58" min="30" max="130" inputmode="numeric"></div>
@@ -835,7 +836,7 @@ function setFeel(v){ feelValue=v; [...$('feel-row').children].forEach((c,j)=>c.c
 function hm(hId,mId){ return (parseInt($(hId).value)||0)*60+(parseInt($(mId).value)||0); }
 function setHm(hId,mId,mins){ $(hId).value=mins?Math.floor(mins/60):''; $(mId).value=mins?mins%60:''; }
 function clearForm(){
-  $('f-date').value=todayStr();
+  $('f-date').value=addDays(todayStr(),-1);
   ['f-bed','f-wake','deep-h','deep-m','rem-h','rem-m','light-h','light-m','f-awake','f-restless','f-notes'].forEach(id=>$(id).value='');
   setFeel(null); editingId=null;
   $('edit-banner').style.display='none'; $('form-title').textContent='Log a night'; $('btn-save').textContent='Save night';
@@ -846,7 +847,7 @@ $('btn-save').onclick=async()=>{
   const deep=hm('deep-h','deep-m'), rem=hm('rem-h','rem-m'), light=hm('light-h','light-m');
   if(deep+rem+light===0){ toast('Enter at least one sleep stage'); return; }
   if(deep+rem+light>16*60){ toast('That’s over 16h of sleep — check the numbers'); return; }
-  const date=$('f-date').value||todayStr();
+  const date=$('f-date').value||addDays(todayStr(),-1);
   const entry={
     id: editingId||Date.now().toString(),
     date, bed:$('f-bed').value, wake:$('f-wake').value,
@@ -1158,13 +1159,31 @@ function rhrBaseline(excludeDate){
   return pool.reduce((s,e)=>s+e.rest,0)/pool.length;
 }
 
+let editingHRId=null;
+function clearHRForm(){
+  ['hr-rest','hr-min','hr-max','hr-fat','hr-cardio','hr-peak','hr-notes'].forEach(id=>$(id).value='');
+  $('hr-date').value=addDays(todayStr(),-1);
+  editingHRId=null;
+  $('hr-edit-banner').style.display='none'; $('hr-form-title').textContent='Log a day'; $('btn-hr-save').textContent='Save day';
+}
+function editHR(id){
+  const e=hrEntries.find(x=>x.id===id); if(!e) return;
+  editingHRId=id;
+  $('hr-date').value=e.date; $('hr-rest').value=e.rest;
+  $('hr-min').value=e.min||''; $('hr-max').value=e.max||'';
+  $('hr-fat').value=e.fat||0; $('hr-cardio').value=e.cardio||0; $('hr-peak').value=e.peak||0;
+  $('hr-notes').value=e.notes||'';
+  $('hr-edit-banner').style.display='block'; $('hr-form-title').textContent='Edit day'; $('btn-hr-save').textContent='Update day';
+  switchTab('heart'); window.scrollTo({top:0,behavior:'smooth'});
+}
+$('hr-cancel-edit').onclick=(ev)=>{ ev.preventDefault(); clearHRForm(); };
 $('btn-hr-save').onclick=async()=>{
   const rest=parseInt($('hr-rest').value)||0;
   if(!rest){ toast('Resting HR is the one required number'); return; }
   if(rest<30||rest>130){ toast('That resting HR looks off — double-check it'); return; }
-  const date=$('hr-date').value||todayStr();
+  const date=$('hr-date').value||addDays(todayStr(),-1);
   const entry={
-    id:Date.now().toString(), date, rest,
+    id: editingHRId||Date.now().toString(), date, rest,
     min:parseInt($('hr-min').value)||null,
     max:parseInt($('hr-max').value)||null,
     fat:parseInt($('hr-fat').value)||0,
@@ -1172,13 +1191,12 @@ $('btn-hr-save').onclick=async()=>{
     peak:parseInt($('hr-peak').value)||0,
     notes:$('hr-notes').value.trim()
   };
-  hrEntries=hrEntries.filter(e=>e.date!==date);
+  hrEntries=hrEntries.filter(e=>e.id!==entry.id && e.date!==date);
   hrEntries.push(entry);
   hrEntries.sort((a,b)=>b.date.localeCompare(a.date));
   if(await persistHR()){
-    toast('Day saved');
-    ['hr-rest','hr-min','hr-max','hr-fat','hr-cardio','hr-peak','hr-notes'].forEach(id=>$(id).value='');
-    $('hr-date').value=todayStr();
+    toast(editingHRId?'Day updated':'Day saved');
+    clearHRForm();
     renderAll(); window.scrollTo({top:0,behavior:'smooth'});
   }
 };
@@ -1225,7 +1243,7 @@ $('hr-shot-input').addEventListener('change', async (ev)=>{
       body:JSON.stringify({ model:'claude-sonnet-5', max_tokens:1000,
         messages:[{role:'user',content:[
           {type:'image',source:{type:'base64',media_type:mediaType,data:data}},
-          {type:'text',text:`This is a screenshot of a heart rate tracker (Fitbit or similar) showing a day of heart rate data. Extract the data and respond with ONLY a JSON object, no other text, no markdown fences. Use exactly these keys:\n{"resting_hr": number or null, "resting_hr_estimated": boolean, "min_hr": number or null, "max_hr": number or null, "fat_burn_min": number, "cardio_min": number, "peak_min": number, "notable": "one short sentence describing any obvious spikes and their approximate times, or empty string"}\nIf a resting heart rate is explicitly labeled on the screenshot, use that number and set resting_hr_estimated to false. If none is explicitly labeled, estimate it yourself from the graph: ignore the high spikes during exercise (the fat burn/cardio/peak zones) and average the lowest, steadiest stretches of the line during normal non-exercising AWAKE activity, then set resting_hr_estimated to true. ${sleepNote} Zone minutes may be labeled Fat burn/Cardio/Peak or Light/Moderate/Vigorous — map them in that order. Use 0 for zone minutes not shown. IMPORTANT: you must always give your best numeric guess for resting_hr whenever the image shows any heart-rate line data at all — do not give up and return null just because you're uncertain or the sleep window isn't obvious; make your best judgment call and set resting_hr_estimated to true. Only return null for resting_hr if the image truly contains no heart-rate graph or is too blurry/cropped to see any HR line whatsoever.`}
+          {type:'text',text:`This is a screenshot of a heart rate tracker (Fitbit or similar) showing a day of heart rate data. Extract the data and respond with ONLY a JSON object, no other text, no markdown fences. Use exactly these keys:\n{"resting_hr": number or null, "resting_hr_estimated": boolean, "min_hr": number or null, "max_hr": number or null, "fat_burn_min": number, "cardio_min": number, "peak_min": number, "notable": "one short sentence describing any obvious spikes and their approximate times, or empty string"}\nIf a resting heart rate is explicitly labeled on the screenshot, use that number and set resting_hr_estimated to false. If none is explicitly labeled, estimate it yourself from the graph: this should represent the person's typical AWAKE daytime baseline, NOT their single lowest or quietest moment. Exclude sleep (see below) and exclude any stretches that fall in the moderate/vigorous/peak (or cardio/peak) zones (that's exercise, not resting). Then average essentially ALL of the remaining awake time — most of a normal day, including ordinary activity like standing, walking around, and light chores, counts as "resting" for this purpose, since only formal exercise and sleep are excluded. Do not just pick out the single calmest dip of the day; that undershoots the real number. Then set resting_hr_estimated to true. ${sleepNote} Zone minutes may be labeled Fat burn/Cardio/Peak or Light/Moderate/Vigorous — map them in that order. Use 0 for zone minutes not shown. IMPORTANT: you must always give your best numeric guess for resting_hr whenever the image shows any heart-rate line data at all — do not give up and return null just because you're uncertain or the sleep window isn't obvious; make your best judgment call and set resting_hr_estimated to true. Only return null for resting_hr if the image truly contains no heart-rate graph or is too blurry/cropped to see any HR line whatsoever.`}
         ]}]
       })
     });
@@ -1343,7 +1361,7 @@ function renderHeartList(){
       <div class="entry-top"><span class="entry-date">${prettyDate(e.date)}</span><span class="entry-score" style="color:var(--awake)">${e.rest} bpm</span></div>
       <div class="entry-meta">${e.min?`Range ${e.min}–${e.max||'?'} bpm · `:''}Zones: ${e.fat||0}m fat burn · ${e.cardio||0}m cardio · ${e.peak||0}m peak</div>
       ${e.notes?`<div class="entry-notes">${escapeHtml(e.notes)}</div>`:''}
-      <div class="entry-actions"><button class="danger" onclick="deleteHR('${e.id}')">Delete</button></div>
+      <div class="entry-actions"><button onclick="editHR('${e.id}')">Edit</button><button class="danger" onclick="deleteHR('${e.id}')">Delete</button></div>
     </div>`).join('');
   }
 }
@@ -1590,8 +1608,8 @@ function renderAll(){
   renderUsage();
 }
 
-$('f-date').value=todayStr();
-$('hr-date').value=todayStr();
+$('f-date').value=addDays(todayStr(),-1);
+$('hr-date').value=addDays(todayStr(),-1);
 load();
 </script>
 
