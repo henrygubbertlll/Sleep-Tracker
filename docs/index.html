@@ -409,7 +409,6 @@ canvas{max-height:230px;}
 <section id="tab-heart" style="display:none;">
   <div class="card" id="hr-baseline-card" style="display:none;">
     <h2>Recovery signal</h2>
-    <div id="hr-readiness" style="font-size:13px; color:var(--muted); margin-bottom:10px;"></div>
     <div class="dash-total" id="hr-today" style="margin-bottom:10px;"></div>
     <div class="verdicts" id="hr-verdicts" style="margin-top:0; padding-top:0; border-top:none;"></div>
   </div>
@@ -1310,25 +1309,6 @@ let chR;
 // Fitbit-style Active Zone Minutes: fat-burn minutes count 1:1, cardio/peak count 2:1.
 function activeZoneMinutes(e){ return (e.fat||0) + ((e.cardio||0)+(e.peak||0))*2; }
 
-// Rough readiness-score approximation (0-100), modeled on Google Health's readiness score
-// (which uses HRV + RHR + sleep). We don't have HRV from screenshots, so this only uses
-// last night's sleep score and today's resting HR vs your rolling baseline — always
-// labeled as an approximation so it isn't mistaken for the real thing.
-function readinessScore(hrEntry){
-  const base=rhrBaseline(hrEntry.date);
-  const nightBefore=entries.find(x=>x.date===addDays(hrEntry.date,-1));
-  const sleepPts = nightBefore ? (score(nightBefore)/100)*50 : 25; // neutral default if no sleep logged
-  let rhrPts = 25; // neutral default until we have a baseline
-  if(base!=null){
-    const dv=hrEntry.rest-base;
-    if(dv<=-3) rhrPts=50;
-    else if(dv<3) rhrPts=40;
-    else if(dv<5) rhrPts=25;
-    else rhrPts=10;
-  }
-  return Math.round(sleepPts+rhrPts);
-}
-
 function renderHeartDash(){
   // recovery signal card — lives in the Heart tab
   const card=$('hr-baseline-card');
@@ -1337,9 +1317,8 @@ function renderHeartDash(){
     card.style.display='block';
     const e=hrEntries[0];
     $('hr-today').innerHTML=`${e.rest} <span>bpm resting · ${prettyDate(e.date)}</span>`;
-    const rdy=readinessScore(e);
     const azm=activeZoneMinutes(e);
-    $('hr-readiness').innerHTML=`<b style="color:var(--text); font-size:20px;">${rdy}</b> <span>readiness (approx. — sleep + resting HR only, no HRV data available from screenshots)</span> &nbsp;·&nbsp; <b style="color:var(--text);">${azm}</b> <span>Active Zone Minutes today</span>`;
+    $('hr-today').innerHTML+=` &nbsp;·&nbsp; <b>${azm}</b> <span>Active Zone Minutes today</span>`;
     const base=rhrBaseline(e.date);
     const vs=[];
     if(base!=null){
